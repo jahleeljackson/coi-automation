@@ -1,0 +1,308 @@
+# Overview
+
+This product automates Certificate of Insurance (COI) request servicing for independent commercial property & casualty insurance agencies. It is sold as a per-agency-owned package: each customer receives and owns their repository, n8n instance, Airtable base, Streamlit UI, configuration, and data. After handoff, the seller has no residual control over the customer's system.
+
+The product's value is the time and manual work it removes from COI intake, drafting, and review. Design principles baked into the MVP are redundancy (retries and clear failure alerts), idempotence (safe reprocessing via linked reopen records), and auditability (raw email, model output, approvals, timestamps, and PDF versions retained as ground truth).
+
+The foundation is the existing n8n workflow in `COI Request MVP.json`: Gmail Trigger (COI inbox) → OpenAI field extraction → Shape Fields → Airtable log → Gmail text draft reply. The MVP extends that spine with per-field confidence gating, stronger Airtable schema, a Streamlit review UI, real ACORD 25 AcroForm filling, and an approve path that attaches the filled PDF to a Gmail draft via an n8n webhook.
+
+**Primary users:** CSRs and producers (whoever interfaces with clients requesting certificates). Roles are `agent` and `admin`.
+
+**Success criterion:** An agent can review and approve a draft within five minutes without leaving the Streamlit UI, using real inbound emails.
+
+**Scope:** ACORD 25 only for the initial release.
+
+---
+
+# Users and Roles
+
+## Agent
+- Access the request queue and document detail views only.
+- Edit extracted fields, view reviewer notes, download the filled ACORD 25 PDF, approve, and deny.
+- Perform manual AMS lookups outside the product; the UI does not integrate with AMS in MVP.
+
+## Admin
+- Everything an agent can do.
+- View aggregate metrics (request count, time-to-approve, estimated hours saved).
+- Manage users (create/update/deactivate; assign `agent` or `admin`).
+- Configure one-time (per install) agency/producer settings used to autofill the ACORD producer block.
+
+## Auth
+- Per-deploy email/password accounts stored in an Airtable `Users` table.
+- Roles: `agent` | `admin`.
+- No shared password-only mode; no third-party IdP required for MVP.
+
+---
+
+# Core Features
+
+For each feature: what it does, why it matters, how it works at a high level, and acceptance criteria.
+
+## 1. Email inbox extraction
+- **What:** Reads new messages from a shared Gmail inbox reserved for COI requests; captures subject, sender, and body.
+- **Why:** Unstructured email is the primary intake channel; extraction is the input to AI structuring and the audit trail.
+- **How:** n8n Gmail Trigger on the reserved inbox. Attachments are ignored in MVP. Requesters may be insureds, holders, GCs, or brokers; extraction uses one generalized schema (no requester-type branching).
+- **Acceptance:**
+  - New emails in the reserved inbox create a downstream pipeline run.
+  - Subject, sender email, and body are available to the AI node and stored for audit.
+  - Attachments are not parsed or required.
+
+## 2. AI field extraction (per-field confidence)
+- **What:** LLM extracts structured COI fields from the email into JSON, with a confidence score per field.
+- **Why:** Request emails are unstructured; agents need a pre-filled working set without inventing low-trust values.
+- **How:** OpenAI (or equivalent) node with a system prompt specialized for commercial COI intake. Each extractable field carries its own confidence. Only fields with confidence **greater than 0.8** are written into fillable/display values; fields at or below 0.8 are left blank and treated as missing info. Ambiguity is captured only in free-text `notes_for_reviewer` (no structured conflict UI). The request is always queued in Airtable regardless of confidence.
+- **Fields (foundation from current workflow, extended for per-field confidence):**
+  - `requester_email`
+  - `insured_client_name`
+  - `certificate_holder_name`
+  - `certificate_holder_address`
+  - `additional_insured`
+  - `waiver_of_subrogation`
+  - `coverage_types_requested`
+  - `specific_limits_requested`
+  - `needed_by`
+  - `notes_for_reviewer`
+  - Per-field confidence values (replace single overall `extraction_confidence` as the gate; an overall score may remain for display only)
+- **Acceptance:**
+  - Every processed email yields a structured payload and an Airtable request row.
+  - No field with confidence ≤ 0.8 is autofilled on the ACORD or presented as confirmed data.
+  - Low-confidence / missing fields remain editable blanks in the UI.
+  - `notes_for_reviewer` is visible on the detail pane.
+
+## 3. Airtable as system of record
+- **What:** Airtable holds authoritative request state, users, agency settings, and audit artifacts.
+- **Why:** Operators need live visibility; the Streamlit UI is a nicer front end, not a second source of truth.
+- **How:** n8n writes new/reopened requests via API. Streamlit reads/writes status and field edits via Airtable API. Tables at minimum: `Requests`, `Users`, `AgencySettings` (audit may live as fields on `Requests` or a linked `AuditEvents` table).
+- **Acceptance:**
+  - Creating, editing, approving, and denying a request always updates Airtable.
+  - UI list/detail views reflect Airtable state after refresh/load.
+  - Reopened requests store `prior_record_id` pointing at the previous request record.
+
+## 4. Streamlit review UI
+- **What:** Local-first web UI for queue-based review of COI requests.
+- **Why:** Agents need edit / approve / deny / download in one place without living in Airtable or n8n.
+- **How:** Streamlit app authenticated against Airtable `Users`. Agent home is a status-filterable queue with a detail pane. Admin additionally sees metrics, user management, and agency settings. Deploy target later may be AWS; MVP runs locally.
+- **Acceptance:**
+  - Agent can filter queue by status and open a detail pane.
+  - Agent can edit fields, download PDF, approve, and deny without leaving the app.
+  - Agent cannot access metrics, user management, or agency settings.
+  - Admin can access those surfaces.
+
+## 5. ACORD 25 draft generator
+- **What:** Fills a real ACORD 25 AcroForm PDF (edition present in-repo as `.cursor/acord25.pdf`) with high-confidence and agent-edited values plus agency producer settings.
+- **Why:** Manually typing into ACORD 25 is a major CSR time sink; pre-filled PDFs are the core deliverable of the MVP.
+- **How:** PDF generation runs in the Streamlit app (not in n8n). No DRAFT watermark for MVP. Policy/coverage truth for blank coverage grids remains a manual AMS lookup by the agent.
+- **MVP autofill policy:**
+  - Always candidates when available: producer block from `AgencySettings`; named insured; certificate holder name/address; additional insured / waiver of subrogation when confidence > 0.8; description/operations or reviewer-facing notes when present.
+  - Leave blank for agent AMS verification unless clearly extracted at > 0.8: policy numbers, limits, insurers, coverage checkboxes/grids, and effective/expiration dates.
+- **Acceptance:**
+  - Download produces a filled AcroForm PDF openable in standard PDF readers.
+  - Producer block matches admin agency settings.
+  - Fields ≤ 0.8 confidence are not silently filled.
+  - Agent edits in the UI are reflected in the downloaded/approved PDF.
+
+## 6. Approve path (Gmail draft with PDF)
+- **What:** Approve marks the request approved and creates a Gmail draft that includes the filled ACORD 25 PDF as an attachment.
+- **Why:** Final delivery remains human-controlled (no auto-send), but the draft must be ready to send with the certificate attached.
+- **How:** Streamlit fills the PDF, then POSTs the PDF (and request record id / thread metadata) to an **n8n webhook**. n8n creates the Gmail draft with the PDF attached using the existing mailbox credentials. Streamlit updates Airtable status (and audit fields: who approved, timestamps, PDF version id). Deny sets Airtable status to `Rejected` only; no email is sent or drafted for denial; no deny reason is required.
+- **Acceptance:**
+  - Approve creates a Gmail draft with the filled PDF attached.
+  - Approve updates Airtable with approver identity, timestamps, and PDF version identifier.
+  - Deny sets `Rejected` with no outbound email and no required reason.
+  - No message is auto-sent to the requester on approve or deny.
+
+## 7. Intake Gmail draft reply (existing behavior retained)
+- **What:** After intake logging, n8n continues to create a text Gmail draft reply summarizing captured fields (existing node behavior).
+- **Why:** Gives the agency a ready acknowledgment/capture draft without auto-sending.
+- **How:** Existing `Gmail - Create Draft Reply` path in `COI Request MVP.json`. Remains draft-only.
+- **Acceptance:**
+  - Intake still produces a text draft reply; nothing is auto-sent.
+  - Approve-path PDF draft is a separate, later action from the UI.
+
+## 8. Failure handling and alerts
+- **What:** Retries transient OpenAI and Airtable failures; alerts a human if failures persist.
+- **Why:** Redundancy and operability for a self-hosted agency install.
+- **How:** On OpenAI or Airtable errors, retry up to three times. If still failing, send an alert email to `jahleel@cassianconsultingai.com`.
+- **Acceptance:**
+  - Transient failures do not permanently drop a request without retry.
+  - After three failures, the configured alert email is notified with enough context to identify the failed run.
+
+## 9. Idempotence and reopen
+- **What:** Reprocessing the same email (or equivalent re-intake) does not silently overwrite history.
+- **Why:** Idempotence and auditability require a clear lineage when work is redone.
+- **How:** Create a **new** Airtable request row, start field values fresh from the new extraction, and set `prior_record_id` to the previous request's record id.
+- **Acceptance:**
+  - Reprocess yields a new record linked to the prior one.
+  - Prior record remains intact for audit.
+
+## 10. Admin metrics
+- **What:** Simple principal/admin dashboard metrics.
+- **Why:** Agency owners need proof of volume and time saved.
+- **How:** Compute from Airtable timestamps/statuses in Streamlit:
+  - Count of requests
+  - Time-to-approve (e.g., created → approved)
+  - Estimated hours saved = **(completed COIs × 15 minutes) / 60**
+- **Acceptance:**
+  - Admin can see all three metrics.
+  - Hours saved uses the fixed 15-minutes-per-completed-COI formula.
+
+---
+
+# User Experience
+
+## Agent journey
+1. Log in as agent.
+2. Open the queue; filter by status if needed (e.g., `New`, `In Review`, `Clarification Needed`).
+3. Select a request; detail pane shows extracted fields, blanks for missing/low-confidence data, and `notes_for_reviewer`.
+4. Look up policy/coverage truth in AMS (outside the app); edit fields in the UI as needed.
+5. Download PDF to preview; approve (Gmail draft with PDF) or deny (status only).
+
+## Admin journey
+1. Log in as admin.
+2. Use the same queue/detail flow when reviewing work.
+3. Open metrics for volume, time-to-approve, and hours saved.
+4. Manage users and set agency/producer ACORD block settings once per install (editable later as needed).
+
+## Explicit UX rules
+- Ambiguity is free-text notes only.
+- Deny does not require a reason.
+- Agents never see admin-only pages.
+- Airtable remains the system of record; UI is the operator front end.
+
+---
+
+# Technical Architecture
+
+## Components
+- **n8n (self-hosted):** Intake workflow (Gmail → OpenAI → shape → Airtable → text draft reply); retries/alerts; **approve webhook** that creates Gmail draft with PDF attachment. Evolve `COI Request MVP.json` rather than replacing it blindly.
+- **Airtable:** System of record for `Requests`, `Users`, `AgencySettings`, and audit data.
+- **Streamlit (local first):** Auth/RBAC, queue/detail, field edits, ACORD 25 fill/download, approve/deny actions, admin metrics/settings. Later deployable per agency (e.g., AWS).
+- **ACORD asset:** Real AcroForm PDF at `.cursor/acord25.pdf`.
+
+## Data flow
+1. Email arrives in reserved COI Gmail inbox.
+2. n8n extracts fields with per-field confidence, writes Airtable `Requests` row (or reopen row with `prior_record_id`), creates text draft reply.
+3. Agent opens Streamlit queue backed by Airtable.
+4. Agent edits; Streamlit fills ACORD 25 for download.
+5. On approve, Streamlit POSTs PDF + metadata to n8n webhook; n8n creates Gmail draft with PDF; Airtable updated with approval audit fields.
+6. On deny, Streamlit sets Airtable `Rejected` only.
+
+## Effort focus
+Most implementation effort should go to the Streamlit UI and ACORD 25 generator. The n8n workflow is the foundation to harden (confidence shaping, reopen, retries, approve webhook).
+
+## Packaging / tenancy
+- Not a shared multi-tenant SaaS.
+- Separate everything per agency: repo, code, n8n, Airtable, UI deploy, secrets, and data.
+- Configuration via environment variables and Airtable settings suitable for customer-owned handoff.
+
+---
+
+# Data Model, Status, and Audit
+
+## Request statuses
+Align with existing Shape Fields options and define operator-facing transitions:
+- `New` — created by intake; awaiting agent pickup
+- `Pending` — optional holding state if needed by operators
+- `In Review` — agent actively working
+- `Clarification Needed` — waiting on missing info (manual status; no auto email in MVP)
+- `Approved` — approved; Gmail draft with PDF created
+- `Rejected` — denied; no email
+- `Completed` — request fully finished from the agency's perspective (e.g., after human send outside the system, or explicit close)
+
+MVP must support at least: create as `New`, move to `In Review`, `Approved`, `Rejected`, and `Completed` for metrics.
+
+## Audit requirements (must capture)
+- Raw email (subject, sender, body, and identifiers needed to re-find the message)
+- Model output (structured extraction JSON including per-field confidences)
+- Who approved (user id/email)
+- Timestamps (created, updated, approved/rejected)
+- PDF version identifier (hash or version string for the generated file)
+
+## Coverage truth
+- Manual agent lookup in the agency AMS for MVP.
+- No CanopyConnect or other AMS API integration in MVP.
+
+---
+
+# Development Roadmap
+
+## MVP phases
+- **Phase 0 — Harden n8n intake:** Per-field confidence shaping; reopen with `prior_record_id`; OpenAI/Airtable retry ×3; alert email to `jahleel@cassianconsultingai.com`; keep text draft reply (no auto-send).
+- **Phase 1 — Airtable schema:** `Requests` (including audit fields and `prior_record_id`), `Users` (email, password hash, role), `AgencySettings` (producer/agency ACORD block).
+- **Phase 2 — ACORD 25 filler:** Map and fill real AcroForm fields from `.cursor/acord25.pdf` per autofill policy.
+- **Phase 3 — Streamlit core:** Login/RBAC; queue + detail; edit; download PDF; status updates to Airtable.
+- **Phase 4 — Approve/deny + admin:** Approve webhook → Gmail draft with PDF; deny; admin metrics (count, time-to-approve, 15-min hours saved); user management; agency settings.
+
+## Future enhancements (explicitly out of MVP)
+- Automated email response containing captured info, missing info, and confirmation of service until draft is approved (beyond today's draft-only behavior).
+- Auto-send of final COI.
+- Integration with CanopyConnect (or other AMS) to pull client/policy info.
+- Attachment parsing (PDFs, prior COIs, contracts).
+- Additional ACORD forms beyond ACORD 25.
+- Retool (or other) BI-heavy dashboards.
+- Shared SaaS multi-tenancy across agencies.
+
+---
+
+# Logical Dependency Chain
+
+1. n8n schema / per-field confidence / idempotent reopen / retries and alerts
+2. Airtable schema (`Requests`, `Users`, `AgencySettings`, audit)
+3. ACORD 25 PDF filler library
+4. Streamlit auth, queue, detail, download
+5. Approve webhook (Gmail draft with PDF) and deny/status sync
+6. Admin metrics, user management, agency settings
+
+---
+
+# Risks and Mitigations
+
+| Risk | Mitigation |
+|------|------------|
+| ACORD AcroForm field mapping is complex and brittle | Inventory field names from `.cursor/acord25.pdf` early; limit MVP autofill set; leave coverage grids for humans |
+| Gmail draft-with-attachment via webhook is finicky (binary size, MIME) | Keep mailbox credentials and attachment creation in n8n; test against a real mailbox before handoff |
+| Per-agency ownership increases packaging burden | Env-based config + clear README handoff; no shared-tenant application code |
+| LLM misses or hallucinates certificate details | Per-field confidence > 0.8 gate; human approve required; AMS verification for policy truth |
+| Missed 5-minute review SLA | Optimize intake latency; keep UI read path simple (Airtable); minimize clicks on detail pane |
+| Defining a thin-but-useful MVP | Freeze non-goals listed above; ACORD 25 + queue + approve-with-PDF only |
+
+---
+
+# Appendix
+
+## A. Current n8n workflow foundation (`COI Request MVP.json`)
+Nodes today:
+1. `Gmail Trigger (COI inbox)`
+2. `OpenAI - Extract COI Fields`
+3. `Shape Fields`
+4. `Airtable - Log Request`
+5. `Gmail - Create Draft Reply`
+
+Shape Fields currently include: `requester_email`, `insured_client_name`, `certificate_holder_name`, `certificate_holder_address`, `additional_insured`, `waiver_of_subrogation`, `coverage_types_requested`, `specific_limits_requested`, `needed_by`, `extraction_confidence`, `notes_for_reviewer`, `status` (options: New, In Review, Clarification Needed, Approved, Rejected, Completed, Pending).
+
+MVP must evolve this to **per-field confidence** gating while preserving Airtable as SoR and draft-only Gmail behavior on intake.
+
+## B. Locked constants
+- Confidence threshold: **> 0.8** to fill; else blank/missing
+- Hours saved: **15 minutes × completed COIs**
+- Alert email: **jahleel@cassianconsultingai.com**
+- Success: agent reviews/approves in UI within **5 minutes** on real emails
+- PDF: real ACORD 25 AcroForm; **no** DRAFT watermark in MVP
+- Approve: Gmail **draft** with PDF attached via **n8n webhook** (credentials stay in n8n)
+- Deny: Airtable `Rejected` only; no reason required; no email
+- UI framework: **Streamlit**
+- Attachments: **ignored** in MVP
+- Forms: **ACORD 25 only**
+
+## C. Non-goals (MVP)
+- Parsing email attachments
+- Auto-sending any email
+- AMS / CanopyConnect integration
+- Multi-form support beyond ACORD 25
+- Retool UI
+- Cross-agency shared tenancy or seller-controlled production access after sale
+
+## D. Design principles checklist
+- **Redundancy:** retry ×3 then alert
+- **Idempotence:** new row + `prior_record_id` on reprocess
+- **Auditability:** raw email, model output, approver, timestamps, PDF version

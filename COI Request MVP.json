@@ -1,0 +1,820 @@
+{
+  "name": "COI Request MVP",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "labelIds": [
+            "CATEGORY_PERSONAL",
+            "UNREAD"
+          ]
+        },
+        "options": {}
+      },
+      "id": "637be3f1-5d21-40e0-97d0-ea9ea95c1c3c",
+      "name": "Gmail Trigger (COI inbox)",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        304,
+        -112
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "sEMwQWzhqALeqFn2",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "# System Prompt \u2014 Commercial COI Request Extractor\n\nYou are an AI assistant specializing in **commercial property & casualty insurance agency operations**, with a specific focus on **Certificate of Insurance (COI) request intake**.\n\nYour task is to read an incoming email and extract the relevant COI request information into a structured JSON object. Every extractable business field must include both a `value` and a per-field `confidence` score from 0 to 1.\n\n## Extraction Fields\n\nExtract the following fields as `{ \"value\": ..., \"confidence\": ... }` objects (except `notes_for_reviewer` and `overall_confidence`):\n\n* `requester_email`\n* `insured_client_name`\n* `certificate_holder_name`\n* `certificate_holder_address`\n* `additional_insured`\n* `waiver_of_subrogation`\n* `coverage_types_requested`\n* `specific_limits_requested`\n* `needed_by`\n* `notes_for_reviewer` (plain string)\n* `overall_confidence` (number 0\u20131, display/summary only)\n\n### Field Definitions\n\n**requester_email**\n* Extract the sender's email address from the provided requester email context when available.\n* Do not infer or fabricate an email address.\n* If missing, use `value: \"\"` and low confidence.\n\n**insured_client_name**\n* Identify the named insured / agency client the certificate is being issued for.\n* Do not assume the requester or certificate holder is the insured unless explicitly stated.\n\n**certificate_holder_name**\n* Identify the entity or person that should appear as the **Certificate Holder** on the COI.\n* Do not assume that the requester is the certificate holder.\n* If not explicitly identified, use `value: \"\"` and low confidence.\n\n**certificate_holder_address**\n* Extract the certificate holder mailing address when provided.\n* If only a partial address is present, put what is available in `value` and lower confidence; note gaps in `notes_for_reviewer`.\n\n**additional_insured**\n* Identify any entity explicitly requested to be listed as an **Additional Insured**.\n* Include relevant wording, entities, and details when provided.\n* If none requested, use `value: \"\"` and confidence `0`.\n\n**waiver_of_subrogation**\n* Determine whether the requester explicitly asks for a **Waiver of Subrogation**.\n* If requested, state the relevant entity or policy/context when available.\n* If not mentioned, use `value: \"\"` and confidence `0`.\n* Do not assume a waiver is required merely because an additional insured is requested.\n\n**coverage_types_requested**\n* Extract requested coverage types (e.g., General Liability, Auto, Workers Compensation, Umbrella) when stated.\n* Do not invent coverages from industry norms.\n\n**specific_limits_requested**\n* Extract specific limit amounts or limit language when stated.\n* Do not invent standard limits.\n\n**needed_by**\n* Extract any due date / needed-by date or urgency timing when stated.\n* Prefer ISO date `YYYY-MM-DD` when a calendar date is clear; otherwise keep the stated phrasing.\n* If not mentioned, use `value: \"\"` and confidence `0`.\n\n**notes_for_reviewer**\n* Identify information that is missing, ambiguous, contradictory, or requires human review.\n* Focus on information necessary to process the COI request.\n* Examples include: missing certificate holder, missing address, unclear AI/waiver requirements, conflicting information, unusual contractual language.\n* If no reviewer action appears necessary, return an empty string.\n* This field is a plain string (no confidence object).\n\n**overall_confidence**\n* Provide a single summary confidence from `0` to `1` for the extraction as a whole (for dashboards/display only). Downstream systems gate autofill using **per-field** confidence, not this value.\n\n### Per-field confidence scoring\n\nFor each `{value, confidence}` field:\n* `1.0` = explicitly stated, unambiguous\n* `0.8\u20130.99` = mostly explicit with minor ambiguity\n* `0.5\u20130.79` = significant information missing or ambiguous\n* Below `0.5` = unreliable extraction\n* `0` = not present / cannot be extracted\n\nDownstream systems only autofill fields with confidence **greater than 0.8**. If you are not confident enough for autofill, still return the best `value` you can extract (or `\"\"`) and set confidence accurately so low-trust values can be blanked.\n\n## Important Rules\n\n1. **Never fabricate information.** If a field is not explicitly stated or cannot be reliably determined, return `value: \"\"` with appropriately low confidence.\n2. **Do not infer insurance requirements.** Do not assume AI or waiver requirements from contracts/projects alone.\n3. **Separate requester, insured, and certificate holder.** They are often different parties.\n4. **Preserve meaningful wording** in the relevant field or `notes_for_reviewer`.\n5. **Flag ambiguity rather than guessing.** Prefer empty values + notes over invented entities.\n6. **Do not perform underwriting or coverage determinations.**\n7. **Do not claim that an endorsement is available.**\n8. **Return valid JSON only.** No markdown, explanations, or commentary outside the JSON object.\n\n## Required Output Schema\n\n```json\n{\n  \"requester_email\": { \"value\": \"\", \"confidence\": 0 },\n  \"insured_client_name\": { \"value\": \"\", \"confidence\": 0 },\n  \"certificate_holder_name\": { \"value\": \"\", \"confidence\": 0 },\n  \"certificate_holder_address\": { \"value\": \"\", \"confidence\": 0 },\n  \"additional_insured\": { \"value\": \"\", \"confidence\": 0 },\n  \"waiver_of_subrogation\": { \"value\": \"\", \"confidence\": 0 },\n  \"coverage_types_requested\": { \"value\": \"\", \"confidence\": 0 },\n  \"specific_limits_requested\": { \"value\": \"\", \"confidence\": 0 },\n  \"needed_by\": { \"value\": \"\", \"confidence\": 0 },\n  \"notes_for_reviewer\": \"\",\n  \"overall_confidence\": 0\n}\n```\n\n## Examples\n\nClear request:\n\n```json\n{\n  \"requester_email\": { \"value\": \"john@example.com\", \"confidence\": 1.0 },\n  \"insured_client_name\": { \"value\": \"Acme Contracting LLC\", \"confidence\": 0.95 },\n  \"certificate_holder_name\": { \"value\": \"Riverside Property Management LLC\", \"confidence\": 0.95 },\n  \"certificate_holder_address\": { \"value\": \"1200 Riverside Drive, Richmond, VA 23219\", \"confidence\": 0.95 },\n  \"additional_insured\": { \"value\": \"Riverside Property Management LLC\", \"confidence\": 0.95 },\n  \"waiver_of_subrogation\": { \"value\": \"Riverside Property Management LLC\", \"confidence\": 0.9 },\n  \"coverage_types_requested\": { \"value\": \"General Liability\", \"confidence\": 0.7 },\n  \"specific_limits_requested\": { \"value\": \"\", \"confidence\": 0 },\n  \"needed_by\": { \"value\": \"\", \"confidence\": 0 },\n  \"notes_for_reviewer\": \"Coverage type General Liability was implied by context of a standard COI request but not explicitly listed as a coverage schedule.\",\n  \"overall_confidence\": 0.85\n}\n```\n\nVague request:\n\n```json\n{\n  \"requester_email\": { \"value\": \"ops@example.com\", \"confidence\": 1.0 },\n  \"insured_client_name\": { \"value\": \"\", \"confidence\": 0 },\n  \"certificate_holder_name\": { \"value\": \"\", \"confidence\": 0 },\n  \"certificate_holder_address\": { \"value\": \"\", \"confidence\": 0 },\n  \"additional_insured\": { \"value\": \"\", \"confidence\": 0 },\n  \"waiver_of_subrogation\": { \"value\": \"\", \"confidence\": 0 },\n  \"coverage_types_requested\": { \"value\": \"\", \"confidence\": 0 },\n  \"specific_limits_requested\": { \"value\": \"\", \"confidence\": 0 },\n  \"needed_by\": { \"value\": \"ASAP\", \"confidence\": 0.6 },\n  \"notes_for_reviewer\": \"The email does not identify the insured client, certificate holder, additional insured, or waiver of subrogation requirements.\",\n  \"overall_confidence\": 0.2\n}\n```\n",
+              "role": "system"
+            },
+            {
+              "content": "=Requester email address: {{ $json.from.value[0].address }}\n\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.text}}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "f1764176-8249-433e-b93f-b314ca836537",
+      "name": "OpenAI - Extract COI Fields",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.6,
+      "position": [
+        528,
+        -112
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "WSiZXnCHTiLTvInQ",
+          "name": "OpenAI account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "requester_email",
+              "value": "={{ $json.message.content.requester_email.confidence > 0.8 ? $json.message.content.requester_email.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "requester_email_confidence",
+              "value": "={ $json.message.content.requester_email.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f3",
+              "name": "insured_client_name",
+              "value": "={{ $json.message.content.insured_client_name.confidence > 0.8 ? $json.message.content.insured_client_name.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f4",
+              "name": "insured_client_name_confidence",
+              "value": "={ $json.message.content.insured_client_name.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f5",
+              "name": "certificate_holder_name",
+              "value": "={{ $json.message.content.certificate_holder_name.confidence > 0.8 ? $json.message.content.certificate_holder_name.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f6",
+              "name": "certificate_holder_name_confidence",
+              "value": "={ $json.message.content.certificate_holder_name.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f7",
+              "name": "certificate_holder_address",
+              "value": "={{ $json.message.content.certificate_holder_address.confidence > 0.8 ? $json.message.content.certificate_holder_address.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f8",
+              "name": "certificate_holder_address_confidence",
+              "value": "={ $json.message.content.certificate_holder_address.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f9",
+              "name": "additional_insured",
+              "value": "={{ $json.message.content.additional_insured.confidence > 0.8 ? $json.message.content.additional_insured.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f10",
+              "name": "additional_insured_confidence",
+              "value": "={ $json.message.content.additional_insured.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f11",
+              "name": "waiver_of_subrogation",
+              "value": "={{ $json.message.content.waiver_of_subrogation.confidence > 0.8 ? $json.message.content.waiver_of_subrogation.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f12",
+              "name": "waiver_of_subrogation_confidence",
+              "value": "={ $json.message.content.waiver_of_subrogation.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f13",
+              "name": "coverage_types_requested",
+              "value": "={{ $json.message.content.coverage_types_requested.confidence > 0.8 ? $json.message.content.coverage_types_requested.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f14",
+              "name": "coverage_types_requested_confidence",
+              "value": "={ $json.message.content.coverage_types_requested.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f15",
+              "name": "specific_limits_requested",
+              "value": "={{ $json.message.content.specific_limits_requested.confidence > 0.8 ? $json.message.content.specific_limits_requested.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f16",
+              "name": "specific_limits_requested_confidence",
+              "value": "={ $json.message.content.specific_limits_requested.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f17",
+              "name": "needed_by",
+              "value": "={{ $json.message.content.needed_by.confidence > 0.8 ? $json.message.content.needed_by.value : \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "f18",
+              "name": "needed_by_confidence",
+              "value": "={ $json.message.content.needed_by.confidence }",
+              "type": "number"
+            },
+            {
+              "id": "f19",
+              "name": "extraction_confidence",
+              "value": "={{ $json.message.content.overall_confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "f20",
+              "name": "notes_for_reviewer",
+              "value": "={{ $json.message.content.notes_for_reviewer }}",
+              "type": "string"
+            },
+            {
+              "id": "f21",
+              "name": "status",
+              "value": "New",
+              "type": "string"
+            },
+            {
+              "id": "f22",
+              "name": "raw_extraction_json",
+              "value": "={{ JSON.stringify($json.message.content) }}",
+              "type": "string"
+            },
+            {
+              "id": "f23",
+              "name": "model_output_json",
+              "value": "={{ JSON.stringify($json.message.content) }}",
+              "type": "string"
+            },
+            {
+              "id": "f24",
+              "name": "raw_email_subject",
+              "value": "={{ $('Gmail Trigger (COI inbox)').item.json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "f25",
+              "name": "raw_email_sender",
+              "value": "={{ $('Gmail Trigger (COI inbox)').item.json.from.value[0].address }}",
+              "type": "string"
+            },
+            {
+              "id": "f26",
+              "name": "raw_email_body",
+              "value": "={{ $('Gmail Trigger (COI inbox)').item.json.text }}",
+              "type": "string"
+            },
+            {
+              "id": "f27",
+              "name": "raw_email_message_id",
+              "value": "={{ $('Gmail Trigger (COI inbox)').item.json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "f28",
+              "name": "gmail_thread_id",
+              "value": "={{ $('Gmail Trigger (COI inbox)').item.json.threadId }}",
+              "type": "string"
+            },
+            {
+              "id": "f29",
+              "name": "prior_record_id",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d78453f1-733e-42c9-8103-641e9ce00833",
+      "name": "Shape Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "https://airtable.com/app23WJdY8R7IdqA5/tbl4DwcYYf8L3fHrQ/viwc0zACk33K3x79n",
+          "mode": "url"
+        },
+        "table": {
+          "__rl": true,
+          "value": "https://airtable.com/app23WJdY8R7IdqA5/tbl4DwcYYf8L3fHrQ/viwc0zACk33K3x79n",
+          "mode": "url"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "requester_email",
+              "displayName": "requester_email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "requester_email_confidence",
+              "displayName": "requester_email_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "insured_client_name",
+              "displayName": "insured_client_name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "insured_client_name_confidence",
+              "displayName": "insured_client_name_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "certificate_holder_name",
+              "displayName": "certificate_holder_name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "certificate_holder_name_confidence",
+              "displayName": "certificate_holder_name_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "certificate_holder_address",
+              "displayName": "certificate_holder_address",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "certificate_holder_address_confidence",
+              "displayName": "certificate_holder_address_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "additional_insured",
+              "displayName": "additional_insured",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "additional_insured_confidence",
+              "displayName": "additional_insured_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "waiver_of_subrogation",
+              "displayName": "waiver_of_subrogation",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "waiver_of_subrogation_confidence",
+              "displayName": "waiver_of_subrogation_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "coverage_types_requested",
+              "displayName": "coverage_types_requested",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "coverage_types_requested_confidence",
+              "displayName": "coverage_types_requested_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "specific_limits_requested",
+              "displayName": "specific_limits_requested",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "specific_limits_requested_confidence",
+              "displayName": "specific_limits_requested_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "needed_by",
+              "displayName": "needed_by",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "needed_by_confidence",
+              "displayName": "needed_by_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "extraction_confidence",
+              "displayName": "extraction_confidence",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "notes_for_reviewer",
+              "displayName": "notes_for_reviewer",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "readOnly": false,
+              "removed": false,
+              "options": [
+                {
+                  "name": "New",
+                  "value": "New"
+                },
+                {
+                  "name": "In Review",
+                  "value": "In Review"
+                },
+                {
+                  "name": "Clarification Needed",
+                  "value": "Clarification Needed"
+                },
+                {
+                  "name": "Approved",
+                  "value": "Approved"
+                },
+                {
+                  "name": "Rejected",
+                  "value": "Rejected"
+                },
+                {
+                  "name": "Completed",
+                  "value": "Completed"
+                },
+                {
+                  "name": "Pending",
+                  "value": "Pending"
+                }
+              ]
+            },
+            {
+              "id": "raw_extraction_json",
+              "displayName": "raw_extraction_json",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "model_output_json",
+              "displayName": "model_output_json",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "raw_email_subject",
+              "displayName": "raw_email_subject",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "raw_email_sender",
+              "displayName": "raw_email_sender",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "raw_email_body",
+              "displayName": "raw_email_body",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "raw_email_message_id",
+              "displayName": "raw_email_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "gmail_thread_id",
+              "displayName": "gmail_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "prior_record_id",
+              "displayName": "prior_record_id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c5959834-42cb-4870-a06c-61c8d3182b66",
+      "name": "Airtable - Log Request",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        -112
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "RTsNdafCSU9KTvTM",
+          "name": "Airtable Personal Access Token account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "=Re: {{ $('Gmail Trigger (COI inbox)').item.json.subject }}",
+        "message": "=Hello,\n\nThank you for your certificate of insurance request. Here is what we captured:\n\nInsured (client): {{ $json.fields.insured_client_name }}\nCertificate holder: {{ $json.fields.certificate_holder_name}}\nHolder address: {{ $json.fields.certificate_holder_address }}\nAdditional insured requested: {{ $json.fields.additional_insured }}\nWaiver of subrogation requested: {{ $('Shape Fields').item.json.waiver_of_subrogation }}\nCoverage requested: {{ $('Shape Fields').item.json.coverage_types_requested }}\nLimits requested: {{ $('Shape Fields').item.json.specific_limits_requested }}\nNeeded by: \n\n[REVIEWER NOTES \u2014 DELETE BEFORE SENDING]\nOverall confidence: {{ $('Shape Fields').item.json.extraction_confidence }}\nNotes: {{ $json.notes_for_reviewer }}\n\nWe will have your certificate over to you shortly.\n\nBest regards,\nThe Agency",
+        "options": {}
+      },
+      "id": "54d99a01-3b28-4ee7-a125-11922b714099",
+      "name": "Gmail - Create Draft Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1760,
+        -112
+      ],
+      "webhookId": "96f3f573-36e9-494b-a472-1b956c3326fb",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "sEMwQWzhqALeqFn2",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "https://airtable.com/app23WJdY8R7IdqA5/tbl4DwcYYf8L3fHrQ/viwc0zACk33K3x79n",
+          "mode": "url"
+        },
+        "table": {
+          "__rl": true,
+          "value": "https://airtable.com/app23WJdY8R7IdqA5/tbl4DwcYYf8L3fHrQ/viwc0zACk33K3x79n",
+          "mode": "url"
+        },
+        "filterByFormula": "={{ '{raw_email_message_id}=\\'' + ($('Shape Fields').item.json.raw_email_message_id || '') + '\\'' }}",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "id": "6e9545dc-ee98-4b7d-aa51-a735f3a9851b",
+      "name": "Airtable - Find Prior by Message Id",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        -112
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "RTsNdafCSU9KTvTM",
+          "name": "Airtable Personal Access Token account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Always create a NEW request row; link prior if this Gmail message was seen before.\nconst shaped = $('Shape Fields').first().json;\nlet priorId = '';\n\nfor (const item of items) {\n  const j = item.json || {};\n  // Prefer Airtable record id when a match exists\n  const candidate = j.id || j.recordId || (j.fields && j.fields.id) || '';\n  if (candidate && !String(candidate).startsWith('Error')) {\n    priorId = candidate;\n    break;\n  }\n}\n\nreturn [{\n  json: {\n    ...shaped,\n    prior_record_id: priorId,\n  }\n}];\n"
+      },
+      "id": "ece0b370-e8e5-4275-8ff2-282fcff2d430",
+      "name": "Code - Resolve prior_record_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -112
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger (COI inbox)": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Extract COI Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Extract COI Fields": {
+      "main": [
+        [
+          {
+            "node": "Shape Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Fields": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Find Prior by Message Id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Log Request": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Create Draft Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Find Prior by Message Id": {
+      "main": [
+        [
+          {
+            "node": "Code - Resolve prior_record_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Resolve prior_record_id": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Log Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "474ebc3a-58a4-4de1-aa85-babb36684dac",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cd8c97d78acff9ce8ffea47b72384f1acd9d5c98315c17558adef95f59d54125"
+  },
+  "nodeGroups": [],
+  "id": "t5ygoBxeCSRkPKCs",
+  "tags": []
+}

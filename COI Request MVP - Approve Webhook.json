@@ -1,0 +1,128 @@
+{
+  "name": "COI Request MVP - Approve Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approve-coi",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "77b8d301-271f-428b-96a4-8a3558e98d65",
+      "name": "Approve Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "33124b68-74b1-494b-96b2-1692be77b4e3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst b64 = body.pdf_base64;\nif (!b64) {\n  throw new Error('pdf_base64 missing from approve payload');\n}\nconst binary = Buffer.from(b64, 'base64');\nconst fileName = body.pdf_filename || 'acord25.pdf';\n\nreturn [{\n  json: {\n    request_id: body.request_id,\n    requester_email: body.requester_email,\n    insured_name: body.insured_name,\n    subject: body.subject || 'Certificate of Insurance',\n    gmail_thread_id: body.gmail_thread_id || '',\n    pdf_version_hash: body.pdf_version_hash || '',\n  },\n  binary: {\n    pdf_data: {\n      data: binary.toString('base64'),\n      mimeType: 'application/pdf',\n      fileName,\n      fileExtension: 'pdf',\n    }\n  }\n}];\n"
+      },
+      "id": "febf00d8-1945-4126-bb6f-1c45db10173a",
+      "name": "Code - Decode PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "=Certificate of Insurance - {{ $json.insured_name || 'COI Request' }}",
+        "emailType": "text",
+        "message": "=Please find attached your requested Certificate of Insurance.\n\nRequest ID: {{ $json.request_id }}\n",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "pdf_data"
+              }
+            ]
+          },
+          "threadId": "={{ $json.gmail_thread_id }}"
+        },
+        "sendTo": "={{ $json.requester_email }}"
+      },
+      "id": "486ec9a4-4226-47f7-b117-bb5202ecbc40",
+      "name": "Gmail - Draft with PDF",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "sEMwQWzhqALeqFn2",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, request_id: $('Code - Decode PDF').item.json.request_id, draft: $json }) }}",
+        "options": {}
+      },
+      "id": "440da526-a841-4a22-b3d8-0aa471bbe1d3",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Approve Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code - Decode PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Decode PDF": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Draft with PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Draft with PDF": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

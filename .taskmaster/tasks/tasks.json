@@ -1,0 +1,156 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": "1",
+        "title": "Enhance n8n OpenAI extraction for per-field confidence",
+        "description": "Update the OpenAI system prompt in the n8n workflow to return per-field confidence scores instead of a single overall extraction_confidence. Each extractable field must have its own confidence value (0-1) so that fields with confidence ≤0.8 are left blank.",
+        "details": "Modify the OpenAI - Extract COI Fields node in COI Request MVP.json:\n\n1. Update the system prompt to request per-field confidence output. The JSON schema should become:\n```json\n{\n  \"requester_email\": { \"value\": \"\", \"confidence\": 0.95 },\n  \"insured_client_name\": { \"value\": \"\", \"confidence\": 0.9 },\n  \"certificate_holder_name\": { \"value\": \"\", \"confidence\": 0.85 },\n  \"certificate_holder_address\": { \"value\": \"\", \"confidence\": 0.7 },\n  \"additional_insured\": { \"value\": \"\", \"confidence\": 0.8 },\n  \"waiver_of_subrogation\": { \"value\": \"\", \"confidence\": 0.0 },\n  \"coverage_types_requested\": { \"value\": \"\", \"confidence\": 0.6 },\n  \"specific_limits_requested\": { \"value\": \"\", \"confidence\": 0.0 },\n  \"needed_by\": { \"value\": \"\", \"confidence\": 0.0 },\n  \"notes_for_reviewer\": \"\",\n  \"overall_confidence\": 0.75\n}\n```\n\n2. Update the prompt instructions to explain confidence scoring per field:\n   - 1.0 = explicitly stated, unambiguous\n   - 0.8-0.99 = mostly explicit with minor ambiguity\n   - 0.5-0.79 = significant info missing or ambiguous\n   - Below 0.5 = unreliable extraction\n\n3. Keep jsonOutput: true and temperature: 0 for deterministic output.\n\n4. Update the Shape Fields node to extract both value and confidence from each field object, creating flat fields like `requester_email`, `requester_email_confidence`, etc.",
+        "testStrategy": "1. Send test emails through the Gmail trigger with varying clarity levels.\n2. Verify JSON output contains per-field confidence values.\n3. Test edge cases: emails with missing certificate holder, partial addresses, unclear additional insured requests.\n4. Confirm confidence scores appropriately reflect extraction certainty (clear info should be >0.8, ambiguous <0.8).\n5. Validate that the Shape Fields node correctly parses the nested JSON structure.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:32:43.249Z"
+      },
+      {
+        "id": "2",
+        "title": "Update Shape Fields node with confidence gating logic",
+        "description": "Modify the Shape Fields n8n node to apply the >0.8 confidence threshold, only passing through field values that exceed the threshold and leaving low-confidence fields blank for agent review.",
+        "details": "Update the Shape Fields node in COI Request MVP.json:\n\n1. For each extractable field, add conditional logic:\n```javascript\n// Example for insured_client_name\n{\n  \"id\": \"f2\",\n  \"name\": \"insured_client_name\",\n  \"value\": \"={{ $json.message.content.insured_client_name.confidence > 0.8 ? $json.message.content.insured_client_name.value : '' }}\",\n  \"type\": \"string\"\n},\n{\n  \"id\": \"f2_conf\",\n  \"name\": \"insured_client_name_confidence\",\n  \"value\": \"={{ $json.message.content.insured_client_name.confidence }}\",\n  \"type\": \"number\"\n}\n```\n\n2. Apply this pattern to all extractable fields: requester_email, insured_client_name, certificate_holder_name, certificate_holder_address, additional_insured, waiver_of_subrogation, coverage_types_requested, specific_limits_requested, needed_by.\n\n3. Store raw confidence values in separate *_confidence fields for audit/display purposes.\n\n4. Keep notes_for_reviewer as a direct pass-through (no confidence gating).\n\n5. Add raw_extraction field to store the complete JSON response for audit.",
+        "testStrategy": "1. Test with mock OpenAI responses containing fields at various confidence levels (0.5, 0.79, 0.81, 0.95).\n2. Verify fields at exactly 0.8 are treated as blank (threshold is >0.8, not >=0.8).\n3. Confirm high-confidence fields pass through with correct values.\n4. Validate all *_confidence fields are populated regardless of threshold.\n5. Check that raw_extraction captures complete model output.",
+        "priority": "high",
+        "dependencies": [
+          "1"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:32:46.887Z"
+      },
+      {
+        "id": "3",
+        "title": "Implement retry logic and failure alerts in n8n",
+        "description": "Add error handling with 3 retries for OpenAI and Airtable API calls, and send alert emails to jahleel@cassianconsultingai.com when failures persist after retries.",
+        "details": "Add error handling nodes to COI Request MVP.json:\n\n1. Configure retry settings on OpenAI and Airtable nodes:\n   - Set retryOnFail: true\n   - Set maxTries: 3\n   - Set waitBetweenTries: 1000 (1 second)\n\n2. Add Error Trigger node to catch persistent failures:\n```json\n{\n  \"type\": \"n8n-nodes-base.errorTrigger\",\n  \"name\": \"Error Handler\"\n}\n```\n\n3. Add Gmail node connected to Error Trigger to send alert:\n```json\n{\n  \"type\": \"n8n-nodes-base.gmail\",\n  \"parameters\": {\n    \"resource\": \"message\",\n    \"operation\": \"send\",\n    \"to\": \"jahleel@cassianconsultingai.com\",\n    \"subject\": \"COI MVP Pipeline Failure Alert\",\n    \"message\": \"Pipeline failure after 3 retries.\\n\\nError: {{ $json.error.message }}\\nNode: {{ $json.error.node }}\\nExecution ID: {{ $json.execution.id }}\\nTimestamp: {{ $json.execution.startedAt }}\"\n  }\n}\n```\n\n4. Include enough context in the alert email to identify and debug the failed run (execution ID, error message, node name, original email subject if available).",
+        "testStrategy": "1. Temporarily configure invalid API credentials to trigger failures.\n2. Verify retry attempts occur 3 times with appropriate delays.\n3. Confirm alert email is sent to jahleel@cassianconsultingai.com after exhausting retries.\n4. Validate alert email contains execution ID, error details, and timestamp.\n5. Test both OpenAI and Airtable failure scenarios independently.",
+        "priority": "high",
+        "dependencies": [
+          "1",
+          "2"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:33:45.900Z"
+      },
+      {
+        "id": "4",
+        "title": "Design and create Airtable schema for Requests, Users, and AgencySettings",
+        "description": "Create the complete Airtable base schema with Requests table (including audit fields and prior_record_id for idempotent reopen), Users table for authentication, and AgencySettings table for producer block configuration.",
+        "details": "Create/update Airtable tables with the following schemas:\n\n**Requests Table:**\n- id (Auto Number)\n- requester_email (Email)\n- insured_client_name (Single line text)\n- certificate_holder_name (Single line text)\n- certificate_holder_address (Long text)\n- additional_insured (Long text)\n- waiver_of_subrogation (Single line text)\n- coverage_types_requested (Long text)\n- specific_limits_requested (Long text)\n- needed_by (Date)\n- notes_for_reviewer (Long text)\n- status (Single select: New, Pending, In Review, Clarification Needed, Approved, Rejected, Completed)\n- prior_record_id (Link to Requests - for reopen/idempotence)\n- raw_email_subject (Single line text)\n- raw_email_sender (Email)\n- raw_email_body (Long text)\n- raw_email_message_id (Single line text - Gmail message ID)\n- raw_extraction_json (Long text - full model output)\n- *_confidence fields for each extractable field (Number 0-1)\n- created_at (Created time)\n- updated_at (Last modified time)\n- approved_at (Date time)\n- approved_by (Link to Users)\n- pdf_version_hash (Single line text)\n- gmail_thread_id (Single line text)\n\n**Users Table:**\n- id (Auto Number)\n- email (Email, unique)\n- password_hash (Single line text)\n- role (Single select: agent, admin)\n- name (Single line text)\n- is_active (Checkbox)\n- created_at (Created time)\n- last_login (Date time)\n\n**AgencySettings Table (single row):**\n- producer_name (Single line text)\n- producer_address (Long text)\n- producer_phone (Phone)\n- producer_fax (Phone)\n- producer_email (Email)\n- producer_contact_name (Single line text)",
+        "testStrategy": "1. Verify all tables are created with correct field types.\n2. Test Requests table can be written to from n8n with all required fields.\n3. Confirm prior_record_id link relationship works correctly.\n4. Test Users table accepts email/password_hash/role combinations.\n5. Validate AgencySettings can store producer block information.\n6. Test field validations (email formats, required fields, select options).",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:33:45.903Z"
+      },
+      {
+        "id": "5",
+        "title": "Implement idempotent reopen with prior_record_id linking",
+        "description": "Update the n8n workflow to detect reprocessed emails and create new Airtable request rows linked to prior records via prior_record_id, ensuring audit trail integrity.",
+        "details": "Modify the n8n workflow to handle reopen/reprocess scenarios:\n\n1. Add a node after Gmail Trigger to store the Gmail message ID:\n```javascript\n// Extract unique message identifier\nmessageId = $json.id || $json.messageId\nthreadId = $json.threadId\n```\n\n2. Add Airtable Search node before creating new record:\n```json\n{\n  \"operation\": \"search\",\n  \"filterByFormula\": \"{raw_email_message_id} = '\" + messageId + \"'\"\n}\n```\n\n3. Add IF node to check for existing record:\n   - If found: Set prior_record_id to the existing record's ID\n   - If not found: prior_record_id remains empty\n\n4. Update Airtable - Log Request node to include:\n   - prior_record_id (from lookup or empty)\n   - raw_email_message_id (Gmail message ID)\n   - raw_email_subject (from trigger)\n   - raw_email_sender (from trigger)\n   - raw_email_body (from trigger)\n   - gmail_thread_id (for reply threading)\n\n5. Always create a NEW record - never update existing records during intake.\n\n6. Preserve the prior record's status and data untouched.",
+        "testStrategy": "1. Process an email once, verify single Requests record created.\n2. Reprocess the same email (manually trigger or mark unread), verify new record created.\n3. Confirm new record has prior_record_id pointing to original record.\n4. Verify original record remains unchanged.\n5. Test with 3+ reprocesses to confirm chain of prior_record_id links.\n6. Validate raw_email_* audit fields are populated correctly.",
+        "priority": "medium",
+        "dependencies": [
+          "3",
+          "4"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:36:29.092Z"
+      },
+      {
+        "id": "6",
+        "title": "Build ACORD 25 PDF AcroForm filler module",
+        "description": "Create a Python module that fills the ACORD 25 AcroForm PDF using extracted fields and agency settings, implementing the MVP autofill policy (only high-confidence fields and producer block).",
+        "details": "Create a Python module for PDF generation (e.g., acord_filler.py):\n\n1. Use pypdf or pdfrw library to read and fill the AcroForm at .cursor/acord25.pdf\n\n2. Map ACORD 25 field names to data fields. Common ACORD 25 field names include:\n   - DATE (date field - MM/DD/YYYY)\n   - PRODUCER (producer block - multiline)\n   - INSURED (insured name and address - multiline)\n   - CONTACTNAME, PHONE, FAX, EMAIL (producer contact)\n   - HOLDER (certificate holder name and address)\n   - DESCRIPTIONOFOPERATIONS (description/special provisions)\n   - ADDLINSURED checkboxes, WAIVERSUBROGATION checkboxes\n\n3. Implement autofill policy:\n```python\ndef fill_acord25(request_data: dict, agency_settings: dict) -> bytes:\n    # Always fill (from AgencySettings):\n    #   - Producer block (name, address, phone, fax, email, contact)\n    #   - Current date\n    \n    # Fill if confidence > 0.8:\n    #   - Insured name\n    #   - Certificate holder name/address\n    #   - Additional insured checkbox/text\n    #   - Waiver of subrogation checkbox\n    #   - Description of operations (if provided)\n    \n    # Leave blank (agent fills from AMS):\n    #   - Policy numbers\n    #   - Limits\n    #   - Insurers\n    #   - Coverage checkboxes/grids\n    #   - Effective/expiration dates\n```\n\n4. Return filled PDF as bytes (for download or webhook attachment).\n\n5. Generate PDF version hash (SHA-256) for audit tracking.\n\n6. No DRAFT watermark per PRD requirements.",
+        "testStrategy": "1. Test PDF generation with sample request data containing various confidence levels.\n2. Verify filled PDF opens correctly in Adobe Reader, Preview, and browser PDF viewers.\n3. Confirm producer block is populated from agency settings.\n4. Validate fields with confidence ≤0.8 are left blank.\n5. Test that coverage grids/policy sections remain empty for agent filling.\n6. Verify PDF version hash is generated consistently.\n7. Test with edge cases: special characters, long addresses, empty optional fields.",
+        "priority": "high",
+        "dependencies": [
+          "4"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:34:46.046Z"
+      },
+      {
+        "id": "7",
+        "title": "Build Streamlit authentication and RBAC system",
+        "description": "Create the Streamlit app foundation with email/password authentication against Airtable Users table, implementing role-based access control for agent and admin roles.",
+        "details": "Create the Streamlit app with authentication (e.g., app.py):\n\n1. Set up project structure:\n```\nstreamlit_app/\n  app.py\n  auth.py\n  config.py\n  pages/\n    queue.py\n    detail.py\n    admin_metrics.py\n    admin_users.py\n    admin_settings.py\n  utils/\n    airtable_client.py\n    pdf_generator.py\n```\n\n2. Implement authentication in auth.py:\n```python\nimport bcrypt\nimport streamlit as st\nfrom utils.airtable_client import get_user_by_email\n\ndef login(email: str, password: str) -> dict | None:\n    user = get_user_by_email(email)\n    if user and user['is_active']:\n        if bcrypt.checkpw(password.encode(), user['password_hash'].encode()):\n            return user\n    return None\n\ndef require_auth(allowed_roles: list = None):\n    if 'user' not in st.session_state:\n        st.switch_page('login')\n    if allowed_roles and st.session_state.user['role'] not in allowed_roles:\n        st.error('Access denied')\n        st.stop()\n```\n\n3. Create login page with email/password form.\n\n4. Store user session in st.session_state.\n\n5. Implement role checks:\n   - agent: queue, detail pages only\n   - admin: all pages including metrics, user management, settings\n\n6. Use environment variables for Airtable API credentials:\n   - AIRTABLE_API_KEY\n   - AIRTABLE_BASE_ID",
+        "testStrategy": "1. Test login with valid agent credentials - verify access to queue/detail only.\n2. Test login with valid admin credentials - verify access to all pages.\n3. Test login with invalid credentials - verify rejection.\n4. Test login with inactive user - verify rejection.\n5. Test session persistence across page navigation.\n6. Test direct URL access to admin pages as agent - verify access denied.\n7. Test logout functionality clears session.",
+        "priority": "high",
+        "dependencies": [
+          "4"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:36:29.094Z"
+      },
+      {
+        "id": "8",
+        "title": "Build Streamlit request queue and detail view",
+        "description": "Implement the main agent interface with a filterable request queue (by status) and detail pane showing extracted fields, confidence indicators, editable form, and download PDF functionality.",
+        "details": "Create queue and detail pages in Streamlit:\n\n**Queue Page (pages/queue.py):**\n```python\nimport streamlit as st\nfrom utils.airtable_client import get_requests\n\ndef render_queue():\n    st.title('COI Request Queue')\n    \n    # Status filter\n    status_filter = st.selectbox(\n        'Filter by status',\n        ['All', 'New', 'In Review', 'Clarification Needed', 'Pending']\n    )\n    \n    # Fetch and display requests\n    requests = get_requests(status=status_filter if status_filter != 'All' else None)\n    \n    for req in requests:\n        col1, col2, col3 = st.columns([3, 2, 1])\n        with col1:\n            st.write(req['insured_client_name'] or 'Unknown Insured')\n        with col2:\n            st.write(req['status'])\n        with col3:\n            if st.button('View', key=req['id']):\n                st.session_state.selected_request = req['id']\n                st.switch_page('detail')\n```\n\n**Detail Page (pages/detail.py):**\n```python\ndef render_detail():\n    request = get_request_by_id(st.session_state.selected_request)\n    \n    st.title(f\"Request: {request['insured_client_name']}\")\n    \n    # Display notes_for_reviewer prominently\n    if request['notes_for_reviewer']:\n        st.warning(f\"Reviewer Notes: {request['notes_for_reviewer']}\")\n    \n    # Editable fields with confidence indicators\n    with st.form('edit_request'):\n        fields = ['insured_client_name', 'certificate_holder_name', \n                  'certificate_holder_address', 'additional_insured',\n                  'waiver_of_subrogation', ...]\n        \n        for field in fields:\n            confidence = request.get(f'{field}_confidence', 0)\n            label = f\"{field.replace('_', ' ').title()}\"\n            if confidence <= 0.8:\n                label += \" ⚠️ (Low confidence - verify)\"\n            \n            st.text_input(label, value=request.get(field, ''), key=field)\n        \n        # Status update\n        new_status = st.selectbox('Status', [...], index=current_status_idx)\n        \n        if st.form_submit_button('Save Changes'):\n            update_request(request['id'], form_data)\n    \n    # Download PDF button\n    if st.button('Download ACORD 25 PDF'):\n        pdf_bytes = generate_acord25(request, agency_settings)\n        st.download_button('Download', pdf_bytes, 'acord25.pdf', 'application/pdf')\n```",
+        "testStrategy": "1. Test queue displays all requests from Airtable.\n2. Test status filter correctly filters displayed requests.\n3. Test clicking request navigates to detail view with correct data.\n4. Verify low-confidence fields show warning indicator.\n5. Test field edits save correctly to Airtable.\n6. Verify notes_for_reviewer displays prominently.\n7. Test PDF download generates valid, filled PDF.\n8. Test status changes persist to Airtable.\n9. Verify agent cannot access admin pages from detail view.",
+        "priority": "high",
+        "dependencies": [
+          "6",
+          "7"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:37:13.597Z"
+      },
+      {
+        "id": "9",
+        "title": "Implement approve/deny actions with n8n webhook for Gmail draft",
+        "description": "Add approve and deny buttons to the detail view. Approve generates the PDF, POSTs to an n8n webhook that creates a Gmail draft with attachment, and updates Airtable with audit fields. Deny sets Rejected status only.",
+        "details": "Implement approve/deny workflow:\n\n**1. Add n8n Webhook node (COI Request MVP.json):**\n```json\n{\n  \"type\": \"n8n-nodes-base.webhook\",\n  \"name\": \"Approve Webhook\",\n  \"parameters\": {\n    \"httpMethod\": \"POST\",\n    \"path\": \"approve-coi\",\n    \"responseMode\": \"lastNode\"\n  }\n}\n```\n\n**2. Add Gmail Draft with Attachment node:**\n```json\n{\n  \"type\": \"n8n-nodes-base.gmail\",\n  \"parameters\": {\n    \"resource\": \"draft\",\n    \"operation\": \"create\",\n    \"subject\": \"Certificate of Insurance - {{ $json.insured_name }}\",\n    \"toList\": \"{{ $json.requester_email }}\",\n    \"message\": \"Please find attached your requested Certificate of Insurance.\",\n    \"attachmentsUi\": {\n      \"attachmentsBinary\": {\n        \"property\": \"pdf_data\"\n      }\n    },\n    \"options\": {\n      \"threadId\": \"{{ $json.gmail_thread_id }}\"\n    }\n  }\n}\n```\n\n**3. Streamlit approve action (pages/detail.py):**\n```python\ndef handle_approve():\n    # Generate PDF\n    pdf_bytes = generate_acord25(request, agency_settings)\n    pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()\n    \n    # POST to n8n webhook\n    response = requests.post(\n        os.environ['N8N_APPROVE_WEBHOOK_URL'],\n        json={\n            'request_id': request['id'],\n            'requester_email': request['requester_email'],\n            'insured_name': request['insured_client_name'],\n            'gmail_thread_id': request['gmail_thread_id']\n        },\n        files={'pdf': ('acord25.pdf', pdf_bytes, 'application/pdf')}\n    )\n    \n    if response.ok:\n        # Update Airtable\n        update_request(request['id'], {\n            'status': 'Approved',\n            'approved_at': datetime.utcnow().isoformat(),\n            'approved_by': [st.session_state.user['id']],\n            'pdf_version_hash': pdf_hash\n        })\n        st.success('Request approved - Gmail draft created')\n```\n\n**4. Deny action:**\n```python\ndef handle_deny():\n    update_request(request['id'], {'status': 'Rejected'})\n    st.info('Request rejected')\n```\n\nNo deny reason required per PRD. No email sent on deny.",
+        "testStrategy": "1. Test approve button triggers webhook call.\n2. Verify Gmail draft is created with PDF attachment.\n3. Confirm draft is threaded to original email via gmail_thread_id.\n4. Verify Airtable record updated with Approved status, approved_at, approved_by, pdf_version_hash.\n5. Test deny button sets Rejected status only.\n6. Confirm no email/draft created on deny.\n7. Test webhook error handling (network failure, invalid response).\n8. Verify PDF in draft matches downloaded preview PDF.",
+        "priority": "high",
+        "dependencies": [
+          "5",
+          "8"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:37:13.600Z"
+      },
+      {
+        "id": "10",
+        "title": "Build admin dashboard: metrics, user management, and agency settings",
+        "description": "Create admin-only pages for viewing metrics (request count, time-to-approve, hours saved), managing users (create/update/deactivate with role assignment), and configuring agency producer settings.",
+        "details": "Create admin pages in Streamlit:\n\n**Metrics Page (pages/admin_metrics.py):**\n```python\n@require_auth(['admin'])\ndef render_metrics():\n    st.title('Dashboard Metrics')\n    \n    requests = get_all_requests()\n    completed = [r for r in requests if r['status'] == 'Completed']\n    approved = [r for r in requests if r['status'] in ['Approved', 'Completed']]\n    \n    # Request count\n    st.metric('Total Requests', len(requests))\n    \n    # Time-to-approve (created -> approved)\n    times = []\n    for r in approved:\n        if r['approved_at'] and r['created_at']:\n            delta = parse(r['approved_at']) - parse(r['created_at'])\n            times.append(delta.total_seconds() / 60)  # minutes\n    avg_time = sum(times) / len(times) if times else 0\n    st.metric('Avg Time to Approve', f'{avg_time:.1f} min')\n    \n    # Hours saved: completed COIs * 15 min / 60\n    hours_saved = (len(completed) * 15) / 60\n    st.metric('Estimated Hours Saved', f'{hours_saved:.1f} hrs')\n```\n\n**User Management (pages/admin_users.py):**\n```python\n@require_auth(['admin'])\ndef render_user_management():\n    st.title('User Management')\n    \n    users = get_all_users()\n    for user in users:\n        with st.expander(user['email']):\n            role = st.selectbox('Role', ['agent', 'admin'], key=f\"role_{user['id']}\")\n            is_active = st.checkbox('Active', value=user['is_active'], key=f\"active_{user['id']}\")\n            if st.button('Update', key=f\"update_{user['id']}\"):\n                update_user(user['id'], {'role': role, 'is_active': is_active})\n    \n    # Create new user\n    st.subheader('Create User')\n    with st.form('create_user'):\n        email = st.text_input('Email')\n        password = st.text_input('Password', type='password')\n        role = st.selectbox('Role', ['agent', 'admin'])\n        if st.form_submit_button('Create'):\n            create_user(email, password, role)\n```\n\n**Agency Settings (pages/admin_settings.py):**\n```python\n@require_auth(['admin'])\ndef render_agency_settings():\n    st.title('Agency Settings (Producer Block)')\n    \n    settings = get_agency_settings()\n    \n    with st.form('agency_settings'):\n        producer_name = st.text_input('Producer Name', value=settings.get('producer_name', ''))\n        producer_address = st.text_area('Address', value=settings.get('producer_address', ''))\n        producer_phone = st.text_input('Phone', value=settings.get('producer_phone', ''))\n        # ... other fields\n        \n        if st.form_submit_button('Save'):\n            save_agency_settings({...})\n```",
+        "testStrategy": "1. Verify metrics page only accessible by admin role.\n2. Test request count matches Airtable records.\n3. Verify time-to-approve calculation is accurate.\n4. Confirm hours saved uses formula: completed COIs * 15 / 60.\n5. Test user creation with password hashing.\n6. Test user role updates persist to Airtable.\n7. Test user deactivation prevents login.\n8. Verify agency settings save and load correctly.\n9. Confirm producer block in generated PDFs reflects agency settings.\n10. Test agents cannot access any admin pages.",
+        "priority": "medium",
+        "dependencies": [
+          "7",
+          "8"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-08-12T15:37:13.601Z"
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-08-12T15:37:13.601Z",
+      "taskCount": 10,
+      "completedCount": 10,
+      "tags": [
+        "master"
+      ]
+    }
+  }
+}

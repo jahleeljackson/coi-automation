@@ -1,0 +1,63 @@
+{
+  "name": "COI Request MVP - Error Alerts",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "8ad61e6e-291f-4617-a515-601d8910d29d",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "jahleel@cassianconsultingai.com",
+        "subject": "=COI MVP Pipeline Failure Alert",
+        "emailType": "text",
+        "message": "=Pipeline failure after retries were exhausted (or an unhandled node error).\n\nWorkflow: {{ $json.workflow?.name || $json.workflow.name }}\nExecution ID: {{ $json.execution?.id || $json.execution.id }}\nStarted: {{ $json.execution?.lastNodeExecuted || $json.execution?.startedAt || '' }}\nLast node: {{ $json.node?.name || $json.error?.node || '' }}\nError message: {{ $json.error?.message || JSON.stringify($json.error) }}\n\nFull error JSON:\n{{ JSON.stringify($json.error, null, 2) }}\n",
+        "options": {}
+      },
+      "id": "63b0bb07-e1a4-4ee1-bfe0-d5cda079b25d",
+      "name": "Gmail - Send Failure Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        280,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "sEMwQWzhqALeqFn2",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

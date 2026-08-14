@@ -1,0 +1,79 @@
+<context>
+# Overview  
+I am making a N8N workflow that will automate much of the manual work associated with servicing Certificate of Insurance requests. It's JSON contents are currently in "COI Request MVP.json". It is for independent insurance agencies who serve commerical lines.
+It's value comes from the sheer time and manual work that it erases. As well as having important design principles such as redundancy, idempotence, and auditability baked in.
+
+# Core Features  
+[List and describe the main features of your product. For each feature, include:
+- What it does
+- Why it's important
+- How it works at a high level]
+
+- Email inbox extraction
+    - Reads latest unread email (domain reserved only for COI requests), extracts subject, sender, and body
+    - Information is critical for downstream extraction steps
+    - Polls API every minute to check for new emails
+
+- AI summarization
+    - Reads email data and extracts relevant data points, JSON output
+    - Needed to extract information that comes unstructured 
+    - System prompt directs LLM what to look for and output
+
+- Airtable
+    - Requests are sent to an Airtable Base, holds ground truth of status of COI request operations
+    - Easy visibility and live tracking for less technical operators
+    - Sent over API using access token 
+
+- ACORD 25 Draft Generator 
+    - Takes high-confidence data points and embeds them into ACORD 25 document 
+    - This manual process can/should be easily automated for the service agents
+    - Uses airtable or AI node output to pre-fill fields
+
+- Streamlit or Retool interface 
+
+# User Experience  
+
+- As an insurance service agent, I should be able to see a queue of ACORD 25 drafts that I need to review
+- As an insurance agency principal/owner, I should be able to easily see specific records as well as aggregate statistics of the system (time saves, documents drafted, logs, etc.)
+
+- As an insurance service agent, I should be able to edit, approve, and deny & download drafts.
+
+
+</context>
+<PRD>
+# Technical Architecture  
+
+- I trust you to use best judgment 
+- Most effort should be in building UI interface and ACORD 25 generator
+- Use current schema in @"COI Request MVP.json" as foundation to change and build upon 
+- Logs should be viewable somewhere within system (preferably in UI interface and/or airtable)
+
+
+# Development Roadmap  
+[Break down the development process into phases:
+- MVP requirements
+    - Inbox extraction and AI summarization/extraction 
+    - Airtable 
+    - ACORD 25 generator 
+    - UI interface 
+- Future enhancements
+    - Automated email response containting captured info, missing info if applicable, and confirmation of service until draft is approved
+    - Integration with CanopyConnect to gather client info from AMS
+
+# Logical Dependency Chain
+[Define the logical order of development:
+- N8N json workflow 
+- ACORD 25 generator 
+- UI interface 
+
+# Risks and Mitigations  
+[Identify potential risks and how they'll be addressed:
+- Technical challenges
+- Figuring out the MVP that we can build upon
+- Resource constraints]
+
+# Appendix  
+[Include any additional information:
+- Research findings
+- Technical specifications]
+</PRD>
