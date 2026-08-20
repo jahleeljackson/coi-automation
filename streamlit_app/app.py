@@ -1,7 +1,7 @@
 """COI MVP Streamlit entrypoint — login + role-aware navigation."""
 
 from __future__ import annotations
-
+import tomllib
 import sys
 from pathlib import Path
 
@@ -12,16 +12,21 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from streamlit_app.auth import current_user, logout, render_login_form, require_auth
-
-st.set_page_config(page_title="COI Request MVP", layout="wide")
+from streamlit_app.auth import current_user, logout, render_login_form
 
 
-def _nav() -> None:
-    user = require_auth()
+with open("streamlit_app/.streamlit/config.toml", "rb") as f:
+    config = tomllib.load(f)
+
+agency_name = config["agency-settings"]["name"]
+
+st.set_page_config(page_title=f"{agency_name} COI Request Queue", layout="wide")
+
+
+def _nav(user: dict) -> None:
     st.sidebar.markdown(f"**{user.get('name') or user.get('email')}**")
     st.sidebar.caption(f"Role: {user.get('role')}")
-    st.sidebar.page_link("pages/1_Queue.py", label="Request queue")
+    st.sidebar.page_link("pages/1_Queue.py", label="Request Queue")
     if user.get("role") == "admin":
         st.sidebar.page_link("pages/2_Admin_Metrics.py", label="Metrics")
         st.sidebar.page_link("pages/3_Admin_Users.py", label="Users")
@@ -36,8 +41,8 @@ def main() -> None:
     if not user:
         render_login_form()
         return
-    _nav()
-    st.title("COI Request MVP")
+    _nav(user)
+    st.title(f"{agency_name} COI Request Queue")
     st.write(
         "Use **Request queue** to review drafts. "
         "Admins can open metrics, users, and agency settings from the sidebar."

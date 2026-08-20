@@ -90,10 +90,17 @@ def _confidence(request_data: Mapping[str, Any], field: str) -> float:
         return 0.0
 
 
-def _eligible(request_data: Mapping[str, Any], field: str) -> bool:
+def _eligible(
+    request_data: Mapping[str, Any],
+    field: str,
+    *,
+    respect_confidence: bool = True,
+) -> bool:
     value = request_data.get(field)
     if value is None or str(value).strip() == "":
         return False
+    if not respect_confidence:
+        return True
     # Values arriving from n8n Shape Fields are already blanked at ≤0.8.
     # Still enforce threshold when confidence is present.
     if f"{field}_confidence" in request_data:
@@ -164,12 +171,16 @@ def fill_acord25(
     *,
     template_path: str | Path | None = None,
     completion_date: date | None = None,
+    respect_confidence: bool = True,
 ) -> tuple[bytes, str]:
     """Fill ACORD 25 per MVP autofill policy.
 
     Always fills producer block from ``agency_settings`` and completion date.
     Fills insured / holder / AI / waiver / remarks from ``request_data`` when
-    values are present and confidence (if provided) is > 0.8.
+    values are present and (by default) confidence (if provided) is > 0.8.
+
+    Pass ``respect_confidence=False`` for agent review UIs so current field
+    values (including edits) are filled regardless of extraction confidence.
 
     Leaves policy numbers, limits, insurers, coverage grids, and policy dates blank.
 
@@ -184,6 +195,11 @@ def fill_acord25(
     writer.append(reader)
 
     values: dict[str, str] = {}
+
+    def eligible(field: str) -> bool:
+        return _eligible(
+            request_data, field, respect_confidence=respect_confidence
+        )
 
     # --- Always: completion date + producer block ---
     when = completion_date or date.today()
@@ -213,17 +229,17 @@ def fill_acord25(
             values[k] = str(v).strip()
 
     # --- Conditional autofill ---
-    if _eligible(request_data, "insured_client_name"):
+    if eligible("insured_client_name"):
         values[NAMED_INSURED_FIELD] = str(
             request_data["insured_client_name"]
         ).strip()
 
-    if _eligible(request_data, "certificate_holder_name"):
+    if eligible("certificate_holder_name"):
         values[HOLDER_FIELDS["name"]] = str(
             request_data["certificate_holder_name"]
         ).strip()
 
-    if _eligible(request_data, "certificate_holder_address"):
+    if eligible("certificate_holder_address"):
         parsed = _parse_us_address(
             str(request_data["certificate_holder_address"])
         )
@@ -233,26 +249,26 @@ def fill_acord25(
             if parsed.get(key):
                 values[field_name] = parsed[key]
 
-    if _eligible(request_data, "additional_insured") and _truthy_request(
+    if eligible("additional_insured") and _truthy_request(
         request_data.get("additional_insured")
     ):
         for field_name in AI_CODE_FIELDS:
             values[field_name] = "Y"
 
-    if _eligible(request_data, "waiver_of_subrogation") and _truthy_request(
+    if eligible("waiver_of_subrogation") and _truthy_request(
         request_data.get("waiver_of_subrogation")
     ):
         for field_name in WAIVER_CODE_FIELDS:
             values[field_name] = "Y"
 
     remark_parts: list[str] = []
-    if _eligible(request_data, "additional_insured") and _truthy_request(
+    if eligible("additional_insured") and _truthy_request(
         request_data.get("additional_insured")
     ):
         remark_parts.append(
             f"Additional Insured: {request_data['additional_insured']}"
         )
-    if _eligible(request_data, "waiver_of_subrogation") and _truthy_request(
+    if eligible("waiver_of_subrogation") and _truthy_request(
         request_data.get("waiver_of_subrogation")
     ):
         remark_parts.append(
@@ -264,7 +280,7 @@ def fill_acord25(
     # Description/notes: include when explicitly provided as description;
     # do not dump internal reviewer notes onto the certificate by default.
     if request_data.get("description_of_operations"):
-        if _eligible(request_data, "description_of_operations") or (
+        if eligible("description_of_operations") or (
             "description_of_operations_confidence" not in request_data
             and str(request_data.get("description_of_operations")).strip()
         ):

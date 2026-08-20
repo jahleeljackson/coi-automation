@@ -1,0 +1,23 @@
+[theme]
+primaryColor = "#333436"
+backgroundColor = "#dddfe6"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "black"
+font = "'Pontif':https://fonts.googleapis.com/css2?family=Pontif&display=swap"
+headingFont = "'Pontif+LP':https://fonts.googleapis.com/css2?family=Pontif+LP&display=swap"
+
+[agency-settings]
+name = "BB Insurance"
+
+
+
+# [theme]
+# primaryColor = "#FFFFFF"
+# backgroundColor = "#EFEAE2"
+# secondaryBackgroundColor = "#FFFFFF"
+# textColor = "#0e1c36"
+# font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans&display=swap"
+# headingFont = "Georgia:https://fonts.googleapis.com/css2?family=Georgia&display=swap"
+# 
+# [agency-settings]
+# name = "Commercial Insurance"

@@ -9,5 +9,5 @@ dependencies = [
     "dotenv>=0.9.9",
     "pyairtable>=3.4.2",
     "pypdf>=6.15.0",
-    "streamlit>=1.61.1",
+    "streamlit[pdf]>=1.61.1",
 ]

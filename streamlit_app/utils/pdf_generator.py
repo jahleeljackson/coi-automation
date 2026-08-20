@@ -10,4 +10,6 @@ from acord.fill import fill_acord25
 def generate_acord_pdf(
     request_data: Mapping[str, Any], agency_settings: Mapping[str, Any]
 ) -> tuple[bytes, str]:
-    return fill_acord25(request_data, agency_settings)
+    # Review UI fills current field values (including agent edits), not only
+    # high-confidence extraction values.
+    return fill_acord25(request_data, agency_settings, respect_confidence=False)

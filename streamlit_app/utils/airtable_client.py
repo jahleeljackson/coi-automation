@@ -38,6 +38,21 @@ def agency_settings_table(settings: Settings | None = None) -> Table:
     return _table(settings, settings.agency_settings_table)
 
 
+def get_user_by_id(record_id: str, settings: Settings | None = None) -> dict[str, Any] | None:
+    if not record_id:
+        return None
+    settings = settings or get_settings()
+    try:
+        rec = users_table(settings).get(record_id)
+    except Exception:
+        return None
+    if not rec:
+        return None
+    fields = dict(rec.get("fields") or {})
+    fields["id"] = rec["id"]
+    return fields
+
+
 def get_user_by_email(email: str, settings: Settings | None = None) -> dict[str, Any] | None:
     settings = settings or get_settings()
     # Escape single quotes for Airtable formulas

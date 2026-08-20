@@ -18,6 +18,7 @@ class Settings:
     users_table: str = "Users"
     agency_settings_table: str = "AgencySettings"
     n8n_approve_webhook_url: str = ""
+    session_secret: str = ""
 
 
 def _normalize_airtable_base_id(raw: str) -> str:
@@ -51,4 +52,5 @@ def get_settings() -> Settings:
             "AIRTABLE_AGENCY_SETTINGS_TABLE", "AgencySettings"
         ),
         n8n_approve_webhook_url=os.getenv("N8N_APPROVE_WEBHOOK_URL", ""),
+        session_secret=os.getenv("SESSION_SECRET", "").strip(),
     )

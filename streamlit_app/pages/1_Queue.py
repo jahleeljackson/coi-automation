@@ -50,6 +50,15 @@ EDITABLE_FIELDS = [
     "notes_for_reviewer",
 ]
 
+# Fields that map onto the ACORD 25 fill — mark verified when agent saves.
+PDF_VERIFIED_FIELDS = [
+    "insured_client_name",
+    "certificate_holder_name",
+    "certificate_holder_address",
+    "additional_insured",
+    "waiver_of_subrogation",
+]
+
 
 def _conf_label(field: str, record: dict) -> str:
     label = field.replace("_", " ").title()
@@ -65,7 +74,7 @@ def _conf_label(field: str, record: dict) -> str:
     return f"{label}  (confidence {conf:.2f})"
 
 
-st.title("Request queue")
+st.title("Request Queue")
 status_filter = st.selectbox("Filter by status", STATUSES, index=0)
 
 try:
@@ -126,35 +135,18 @@ st.subheader(
 if record.get("notes_for_reviewer"):
     st.warning(f"Reviewer notes: {record['notes_for_reviewer']}")
 
-col_main, col_meta = st.columns([2, 1])
+col_form, col_pdf = st.columns([1, 1.15], gap="large")
 
-with col_meta:
-    st.markdown("**Audit / meta**")
-    st.write(
-        {
-            "id": record.get("id"),
-            "status": record.get("status"),
-            "requester_email": record.get("requester_email"),
-            "extraction_confidence": record.get("extraction_confidence"),
-            "prior_record_id": record.get("prior_record_id"),
-            "raw_email_subject": record.get("raw_email_subject"),
-            "raw_email_sender": record.get("raw_email_sender"),
-            "gmail_thread_id": record.get("gmail_thread_id"),
-            "approved_at": record.get("approved_at"),
-            "pdf_version_hash": record.get("pdf_version_hash"),
-        }
-    )
-    with st.expander("Raw email body"):
-        st.text(record.get("raw_email_body") or "")
-    with st.expander("Raw extraction JSON"):
-        st.code(
-            record.get("raw_extraction_json")
-            or record.get("model_output_json")
-            or "",
-            language="json",
-        )
+agency = {}
+pdf_bytes = b""
+digest = ""
+try:
+    agency = get_agency_settings()
+    pdf_bytes, digest = generate_acord_pdf(record, agency)
+except Exception as exc:  # noqa: BLE001
+    st.warning(f"PDF preview unavailable: {exc}")
 
-with col_main:
+with col_form:
     edited: dict = {"status": record.get("status") or "New"}
     with st.form("edit_request"):
         for field in EDITABLE_FIELDS:
@@ -171,30 +163,22 @@ with col_main:
         payload = {k: v for k, v in edited.items()}
         if record.get("status") == "New" and payload.get("status") == "New":
             payload["status"] = "In Review"
+        # Agent save = verified for ACORD-mapped fields with values
+        for field in PDF_VERIFIED_FIELDS:
+            if str(payload.get(field) or "").strip():
+                payload[f"{field}_confidence"] = 1.0
         try:
+            # Store hash of PDF regenerated from saved values
+            merged = {**record, **payload}
+            _, new_digest = generate_acord_pdf(
+                merged, agency or get_agency_settings()
+            )
+            payload["pdf_version_hash"] = new_digest
             update_request(selected_id, payload)
-            st.success("Saved.")
+            st.success("Saved — ACORD preview regenerated.")
             st.rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Save failed: {exc}")
-
-    st.markdown("**PDF**")
-    agency = {}
-    pdf_bytes = b""
-    digest = ""
-    try:
-        agency = get_agency_settings()
-        # Merge latest form values for PDF if present in session via record reload
-        pdf_bytes, digest = generate_acord_pdf(record, agency)
-        st.caption(f"pdf_version_hash: `{digest}`")
-        st.download_button(
-            "Download ACORD 25 PDF",
-            data=pdf_bytes,
-            file_name=f"acord25-{selected_id}.pdf",
-            mime="application/pdf",
-        )
-    except Exception as exc:  # noqa: BLE001
-        st.warning(f"PDF preview unavailable: {exc}")
 
     st.markdown("**Actions**")
     c1, c2 = st.columns(2)
@@ -207,7 +191,7 @@ with col_main:
             except Exception as exc:  # noqa: BLE001
                 st.error(str(exc))
     with c2:
-        if st.button("Approve", type="primary"):
+        if st.button("Approve", type="secondary"):
             settings = get_settings()
             if not settings.n8n_approve_webhook_url:
                 st.error("N8N_APPROVE_WEBHOOK_URL is not configured.")
@@ -219,7 +203,8 @@ with col_main:
                         "request_id": selected_id,
                         "requester_email": record.get("requester_email") or "",
                         "insured_name": record.get("insured_client_name") or "",
-                        "subject": record.get("raw_email_subject") or "Certificate of Insurance",
+                        "subject": record.get("raw_email_subject")
+                        or "Certificate of Insurance",
                         "gmail_thread_id": record.get("gmail_thread_id") or "",
                         "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
                         "pdf_filename": f"acord25-{selected_id}.pdf",
@@ -232,7 +217,8 @@ with col_main:
                     )
                     if not resp.ok:
                         st.error(
-                            f"Approve webhook failed ({resp.status_code}): {resp.text[:500]}"
+                            f"Approve webhook failed ({resp.status_code}): "
+                            f"{resp.text[:500]}"
                         )
                     else:
                         update_request(
@@ -248,5 +234,44 @@ with col_main:
                         st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Approve failed: {exc}")
+
+    with st.expander("Audit / meta"):
+        st.write(
+            {
+                "id": record.get("id"),
+                "status": record.get("status"),
+                "requester_email": record.get("requester_email"),
+                "extraction_confidence": record.get("extraction_confidence"),
+                "prior_record_id": record.get("prior_record_id"),
+                "raw_email_subject": record.get("raw_email_subject"),
+                "raw_email_sender": record.get("raw_email_sender"),
+                "gmail_thread_id": record.get("gmail_thread_id"),
+                "approved_at": record.get("approved_at"),
+                "pdf_version_hash": record.get("pdf_version_hash") or digest,
+            }
+        )
+    with st.expander("Raw email body"):
+        st.text(record.get("raw_email_body") or "")
+    with st.expander("Raw extraction JSON"):
+        st.code(
+            record.get("raw_extraction_json")
+            or record.get("model_output_json")
+            or "",
+            language="json",
+        )
+
+with col_pdf:
+    st.markdown("**ACORD 25 preview**")
+    if pdf_bytes:
+        st.caption(f"pdf_version_hash: `{digest[:12]}…`")
+        st.pdf(pdf_bytes, height=720)
+        st.download_button(
+            "Download ACORD 25 PDF",
+            data=pdf_bytes,
+            file_name=f"acord25-{selected_id}.pdf",
+            mime="application/pdf",
+        )
+    else:
+        st.info("PDF will appear here once generation succeeds.")
 
 st.sidebar.markdown(f"Signed in as **{user.get('email')}** ({user.get('role')})")

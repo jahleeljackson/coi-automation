@@ -75,6 +75,26 @@ class FillAcord25Tests(unittest.TestCase):
         self.assertTrue(insured in (None, ""))
         self.assertTrue(holder in (None, ""))
 
+    def test_respect_confidence_false_fills_agent_edits(self):
+        request = {
+            "insured_client_name": "Agent Corrected LLC",
+            "insured_client_name_confidence": 0.4,
+            "certificate_holder_name": "Holder After Edit",
+            "certificate_holder_name_confidence": 0.2,
+        }
+        pdf_bytes, _ = fill_acord25(
+            request, AGENCY, respect_confidence=False
+        )
+        fields = PdfReader(BytesIO(pdf_bytes)).get_fields() or {}
+        self.assertEqual(
+            str(fields["NamedInsured_FullName_A"].get("/V")),
+            "Agent Corrected LLC",
+        )
+        self.assertEqual(
+            str(fields["CertificateHolder_FullName_A"].get("/V")),
+            "Holder After Edit",
+        )
+
     def test_coverage_grids_not_autofilled(self):
         request = {
             "specific_limits_requested": "1,000,000",
